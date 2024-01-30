@@ -1,10 +1,5 @@
 #!/usr/bin/env bats
 
-# This is a testscript using the bats testing framework:
-# https://github.com/sstephenson/bats
-# To run it, at a command prompt:
-# bats testscript.bats
-
 load startup-shutdown
 
 function remote_git_dirs_working_with_commit_logging { #@test
@@ -37,7 +32,7 @@ function remote_git_dirs_working_with_commit_logging { #@test
     # Make a new change
     echo "line2" >> file1.txt
     sleep $WAITTIME
-    
+
     # Verify that new commit has happened
     currentcommit=$(git --git-dir $dotgittestdir/.git rev-parse master)
     [ "$lastcommit" != "$currentcommit" ]
