@@ -65,11 +65,12 @@ origin_commit_hash() {
 ## utility functions
 
 assert_no_descendant_processes_running() {
-  pgrep -fl "$watched_directory" >&2 && return 1 || return 0
+  ! pgrep -fl "$watched_directory" >&2
 }
 
 kill_any_descendant_processes() {
-  pkill -f "$watched_directory" || (( $? ==1 )) # exit 1 means no matches
+  # exit 1 means no matches and that is ok
+  pkill -f "$watched_directory" || return "$(tr 1 0 <<<$?)"
 }
 
 # usefull for debugging
