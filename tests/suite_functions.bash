@@ -36,16 +36,18 @@ initialize_git_repositories() {
   git clone --quiet "$remote_repo" "$local_repo" 2>/dev/null
 }
 
-# fail if gitwach is already running
+# if gitwach is already running fail with exit code 71
+# (at the moment, gitwatch never terminates with that exit code)
 start_gitwatch() {
-  (( "$gitwatch_pid" == 0 )) || return 1
+  (( "$gitwatch_pid" == 0 )) || return 71
   "$gitwatch_script" "$@" "$watched_directory" > "${gitwatch_output}" 3>&- &
   gitwatch_pid=$!
 }
 
-# fail if gitwach is not running
+# if gitwach is not running fail with exit code 71
+# (kill probably doesn't make use of that exit code; its documentation is vague)
 stop_gitwatch() {
-  (( "$gitwatch_pid" > 0 )) || return 1
+  (( "$gitwatch_pid" > 0 )) || return 71
   kill "$gitwatch_pid"
   gitwatch_pid=0
   }
