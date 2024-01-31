@@ -2,6 +2,10 @@
 
 load suite_functions.bash
 
+teardown(){
+  # stop_gitwatch # don't try and stop gitwatch a second time
+  kill_any_descendant_processes # in case the test fails
+}
 
 @test 'descendant processes are terminated on exit' {
 

@@ -24,9 +24,7 @@ setup(){
 }
 
 teardown(){
-  stop_gitwatch_if_running
-  sleep 1.3 # enough time to allow descendant processes to wind down
-  kill_any_descendant_processes
+  stop_gitwatch # fail if gitwach is not running, because that is unexpected
 }
 
 
@@ -51,10 +49,6 @@ stop_gitwatch() {
   kill "$gitwatch_pid"
   gitwatch_pid=0
   }
-
-stop_gitwatch_if_running() {
-  (( "$gitwatch_pid" == 0 )) || stop_gitwatch
-}
 
 commit_hash() {
   git "$@" rev-parse master
