@@ -1,67 +1,45 @@
 #!/usr/bin/env bats
 
-load startup-shutdown
+load suite_functions.bash
+
 
 function syncing_correctly { #@test
-    # Start up gitwatch and see if commit and push happen automatically
-    # after waiting two seconds
-    ${BATS_TEST_DIRNAME}/../gitwatch.sh -r origin "$testdir/local/remote" 3>- &
-    GITWATCH_PID=$!
 
-    # Keeps kill message from printing to screen
-    disown
-
-    # Create a file, verify that it hasn't been added yet,
-    # then commit and push
-    cd remote
+    start_gitwatch -r origin
 
     # According to inotify documentation, a race condition results if you write
     # to directory too soon after it has been created; hence, a short wait.
-    sleep 1
-    echo "line1" >> file1.txt
+    sleep $before_writing_to_a_newly_created_directory
 
-    # Wait a bit for inotify to figure out the file has changed, and do its add,
-    # commit, and push.
-    sleep $WAITTIME
+    echo "line1" >> file1.txt
+    sleep $to_let_gitwatch_react_to_changes
 
     # Verify that push happened
-    currentcommit=$(git rev-parse master)
-    remotecommit=$(git rev-parse origin/master)
-    [ "$currentcommit" = "$remotecommit" ]
+    [ $(commit_hash) = $(origin_commit_hash) ]
 
     # Try making subdirectory with file
-    lastcommit=$(git rev-parse master)
-    mkdir subdir
-    cd subdir
-    echo "line2" >> file2.txt
+    lastcommit=$(commit_hash)
 
-    sleep $WAITTIME
+    mkdir subdir
+    echo "line2" >> subdir/file2.txt
+    sleep $to_let_gitwatch_react_to_changes
 
     # Verify that new commit has happened
     currentcommit=$(git rev-parse master)
-    [ "$lastcommit" != "$currentcommit" ]
+    [ $(commit_hash) != $lastcommit ]
 
     # Verify that push happened
-    currentcommit=$(git rev-parse master)
-    remotecommit=$(git rev-parse origin/master)
-    [ "$currentcommit" = "$remotecommit" ]
-
+    [ $(commit_hash) = $(origin_commit_hash) ]
 
     # Try removing file to see if can work
-    rm file2.txt
-    sleep $WAITTIME
+    rm subdir/file2.txt
+    sleep $to_let_gitwatch_react_to_changes
 
     # Verify that new commit has happened
-    currentcommit=$(git rev-parse master)
-    [ "$lastcommit" != "$currentcommit" ]
+    [ $(commit_hash) != $lastcommit ]
 
     # Verify that push happened
-    currentcommit=$(git rev-parse master)
-    remotecommit=$(git rev-parse origin/master)
-    [ "$currentcommit" = "$remotecommit" ]
+    [ $(commit_hash) = $(origin_commit_hash) ]
 
-    # Remove testing directories
-    cd /tmp
-    rm -rf $testdir
 }
 

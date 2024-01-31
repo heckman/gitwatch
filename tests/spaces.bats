@@ -1,33 +1,27 @@
 #!/usr/bin/env bats
 
-# This inserts customs setup and teardown because of spaces in the file name
+load suite_functions.bash
 
-load startup-shutdown-spaces
+
+# This inserts custom repo location because of spaces in the file name
+setup_file(){
+  # this needs to be exported to be seen by setup()
+  export local_repo="local with spaces/repo with spaces"
+}
 
 function spaces_in_target_dir { #@test
-    # Start up gitwatch with logging, see if works
-    "${BATS_TEST_DIRNAME}"/../gitwatch.sh -l 10 "$testdir/local/rem with spaces" 3>&- &
-    echo "Testdir: $testdir" >&3
-    GITWATCH_PID=$!
-
-    # Keeps kill message from printing to screen
-    disown
-
-    # Create a file, verify that it hasn't been added yet, then commit
-    cd "rem with spaces"
+    # pwd | info
+    start_gitwatch -l 10
 
     # According to inotify documentation, a race condition results if you write
     # to directory too soon after it has been created; hence, a short wait.
-    sleep 1
+    sleep $before_writing_to_a_newly_created_directory
+
     echo "line1" >> file1.txt
+    sleep $to_let_gitwatch_react_to_changes
 
-    # Wait a bit for inotify to figure out the file has changed, and do its add,
-    # and commit
-    sleep "$WAITTIME"
-
-    # Make a new change
     echo "line2" >> file1.txt
-    sleep "$WAITTIME"
+    sleep $to_let_gitwatch_react_to_changes
 
     # Check commit log that the diff is in there
     run git log -1 --oneline

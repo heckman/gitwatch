@@ -1,46 +1,38 @@
 #!/usr/bin/env bats
 
-load startup-shutdown
+load suite_functions.bash
+
 
 function remote_git_dirs_working_with_commit_logging { #@test
+
     # Move .git somewhere else
-    dotgittestdir=$(mktemp -d)
-    mv "$testdir/local/remote/.git" "$dotgittestdir"
+    dotgittestdir="$local_repo/../foreign_git"
+    mkdir "$dotgittestdir"
+    mv "$local_repo/.git/"* "$dotgittestdir"
+    rmdir "$local_repo/.git"
 
-    # Start up gitwatch, intentionally in wrong directory, with remote dir specified
-    ${BATS_TEST_DIRNAME}/../gitwatch.sh -l 10 -g "$dotgittestdir/.git" "$testdir/local/remote" 3>&- &
-    GITWATCH_PID=$!
-
-    # Keeps kill message from printing to screen
-    disown
-
-    # Create a file, verify that it hasn't been added yet, then commit
-    cd remote
+    start_gitwatch -l 10 -g "$dotgittestdir"
 
     # According to inotify documentation, a race condition results if you write
     # to directory too soon after it has been created; hence, a short wait.
-    sleep 1
-    echo "line1" >> file1.txt
+    sleep $before_writing_to_a_newly_created_directory
 
-    # Wait a bit for inotify to figure out the file has changed, and do its add,
-    # and commit
-    sleep $WAITTIME
+    echo "line1" >> file1.txt
+    sleep $to_let_gitwatch_react_to_changes
 
     # Store commit for later comparison
-    lastcommit=$(git --git-dir $dotgittestdir/.git rev-parse master)
+    lastcommit=$(commit_hash --git-dir "$dotgittestdir")
 
     # Make a new change
     echo "line2" >> file1.txt
-    sleep $WAITTIME
+    sleep $to_let_gitwatch_react_to_changes
 
     # Verify that new commit has happened
-    currentcommit=$(git --git-dir $dotgittestdir/.git rev-parse master)
-    [ "$lastcommit" != "$currentcommit" ]
+    [[ $(commit_hash --git-dir "$dotgittestdir") != "$lastcommit" ]]
 
     # Check commit log that the diff is in there
-    run git --git-dir $dotgittestdir/.git log -1 --oneline
+    run git --git-dir "$dotgittestdir" log -1 --oneline
     [[ $output == *"file1.txt"* ]]
 
-    rm -rf $dotgittestdir
 }
 

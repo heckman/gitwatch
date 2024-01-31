@@ -1,29 +1,37 @@
+## common functions for the gitwatch bats test suite
 
-## suite functions
 
-# shellcheck disable=SC2154
+## setup and teardown functions
 
-# default setup
 setup(){
   export gitwatch_pid=0
   export gitwatch_script="${BATS_TEST_DIRNAME}/../gitwatch.sh"
-  # set paths to all the things
+
+  # delays
+  export to_let_gitwatch_react_to_changes=4
+  export before_writing_to_a_newly_created_directory=1
+
+  # paths to all the things
   readonly repo_branch="master"
-  readonly local_repo="${BATS_TEST_TMPDIR}/local/repo"
+  readonly local_repo="${BATS_TEST_TMPDIR}/${local_repo:-local/repo}"
   readonly remote_repo="${BATS_TEST_TMPDIR}/remote/repo"
   readonly gitwatch_output="${BATS_TEST_TMPDIR}/output"
   readonly watched_directory="$local_repo"
+
   initialize_git_repositories
   # shellcheck disable=SC2164 # bats will catch this
   cd "$watched_directory"
 }
 
-# default teardown
 teardown(){
   stop_gitwatch_if_running
   sleep 1.3 # enough time to allow descendant processes to wind down
   kill_any_descendant_processes
 }
+
+
+
+## suite functions
 
 initialize_git_repositories() {
   git init --quiet --bare --initial-branch "$repo_branch" "$remote_repo"
@@ -47,6 +55,15 @@ stop_gitwatch() {
 stop_gitwatch_if_running() {
   (( "$gitwatch_pid" == 0 )) || stop_gitwatch
 }
+
+commit_hash() {
+  git "$@" rev-parse master
+}
+
+origin_commit_hash() {
+  git "$@" rev-parse origin/master
+}
+
 
 
 ## utility functions

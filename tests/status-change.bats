@@ -1,38 +1,27 @@
 #!/usr/bin/env bats
 
-load startup-shutdown
+load suite_functions.bash
+
 
 function commit_only_when_git_status_change { #@test
 
-    # Start up gitwatch and capture its output
-    ${BATS_TEST_DIRNAME}/../gitwatch.sh "$testdir/local/remote" > "$testdir/output.txt" 3>&- &
-    GITWATCH_PID=$!
-
-    # Keeps kill message from printing to screen
-    disown
-
-    # Create a file, verify that it hasn't been added yet, then commit
-    cd remote
+    start_gitwatch
 
     # According to inotify documentation, a race condition results if you write
     # to directory too soon after it has been created; hence, a short wait.
-    sleep 1
+    sleep $before_writing_to_a_newly_created_directory
+
     echo "line1" >> file1.txt
+    sleep $to_let_gitwatch_react_to_changes
 
-    # Wait a bit for inotify to figure out the file has changed, and do its add,
-    # and commit
-    sleep $WAITTIME
-
-    # Touch the file, but no change
     touch file1.txt
-    sleep $WAITTIME
+    sleep $to_let_gitwatch_react_to_changes
 
-    echo "hi there" > "$testdir/output.txt"
-    cat "$testdir/output.txt"
+    echo "hi there" > "$gitwatch_output"
+    cat "$gitwatch_output"
     run git log -1 --oneline
     echo $output
-    #run bash -c "grep \"nothing to commit\" $testdir/output.txt | wc -l"
-    run grep "nothing to commit" $testdir/output.txt
+    run grep "nothing to commit" "$gitwatch_output"
     [ $status -ne 0 ]
 
 }
