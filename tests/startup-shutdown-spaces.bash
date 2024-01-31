@@ -5,7 +5,7 @@ setup() {
   # shellcheck disable=SC2034
   WAITTIME=4
   # Set up directory structure and initialize remote
-  testdir=$(mktemp -d "/tmp/temp space.XXXXX")
+  testdir=$(mktemp -d "/tmp/temp space.XXXXXX")
   # shellcheck disable=SC2164
   cd "$testdir"
   mkdir remote
