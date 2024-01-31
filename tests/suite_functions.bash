@@ -73,7 +73,9 @@ kill_any_descendant_processes() {
   pkill -f "$watched_directory" || return "$(tr 1 0 <<<$?)"
 }
 
-# usefull for debugging
-info(){ { (( "$#" == 0 )) && cat - || echo "$@"; } >&3; }
-debug(){ info "$@"; }
-debug_funcname(){ debug "${FUNCNAME[1]}" "$@"; }
+
+## functions useful for debugging
+
+to_stdout(){ if (( "$#" == 0 )); then cat -; else echo "$@"; fi; }
+info(){ { echo -n '# '; to_stdout "$@" ;} >&3; true; }
+funcname(){ info "${FUNCNAME[1]}" "$@"; }
