@@ -9,7 +9,7 @@ setup() {
   mkdir remote
   # shellcheck disable=SC2164
   cd remote
-  git init -q --bare
+  git init -q --bare --initial-branch master
   # shellcheck disable=SC2103
   cd ..
   # shellcheck disable=SC2164
