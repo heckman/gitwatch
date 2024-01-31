@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#
+#
+# alpine-bats --build | [--build] --force | <tests>...
+#
+#
+# Within the gitwatch repo, runs bats in an alpine-linux docker image.
+# Unless there are options, arguments are passed to bats.
+#
+# Options:
+#
+#   --build             build the docker image
+#   [--build] --force   build, automatically replacing any existing image
+#
+# Note that bats has no --build or --force option;
+# other options will be passed as arguments to bats.
+#
+# This script requires docker for creating and running images
+
+
+docker_image_tag=alpine-gitwatch-bats
+docker_base=alpine:latest
+# removed seemingly-unused packages: openssh, parallel
+docker_init='apk add --no-cache bash git bats ncurses inotify-tools procps-ng'
+docker_workdir=/gitwatch
+docker_endpoint='["bats","-p"]'
+
+# this shouldn't need to be changed
+dockerfile_contents="
+FROM $docker_base
+$(awk '{print("RUN ",$0)}' <<<"$docker_init")
+RUN git config --global user.email \"test@contributor.foo\"
+RUN git config --global user.name \"contributor\"
+ENV TERM=xterm-256color
+WORKDIR '$docker_workdir'
+ENTRYPOINT $docker_endpoint
+"
+
+
+# build the docker image on request
+if grep -qFxe'--build' -e'--force' <<<"$1"; then
+  existing_docker_image_id=$(docker image ls -q "$docker_image_tag")
+  if [[ -n "$existing_docker_image_id" ]]; then
+    if ! printf "%s\n" "${@:1:2}" | grep -qFxe'--force'; then
+        read -r -p "A Docker image tagged '$docker_image_tag' already exists.
+Do you want to replace it? [y/N] " response  >&2;
+        case "$response" in
+          [yY][eE][sS]|[yY]) : ;;
+          *) echo "Aborted." >&2; exit 0 ;;
+        esac
+    fi
+    echo "Removing existing image: $existing_docker_image_id"
+    docker image rm -f "$existing_docker_image_id"
+  fi
+  dockerfile="$(mktemp)"
+  trap 'rm -- "$dockerfile"' EXIT
+  echo "$dockerfile_contents" > "$dockerfile"
+  docker buildx build -t "$docker_image_tag" -f "$dockerfile" .
+  exit 0
+fi
+
+[[ "$1" == "--" ]] && shift
+
+
+# find a realpath that supports --relative-to
+realpath_with_relative_to(){
+  for cmd in realpath grealpath; do
+    if "$cmd" --help 2>&1 | grep -q -- --relative-to; then
+      echo "$cmd"
+      return
+    fi
+  done
+  echo "ERROR: requires gnu realpath with --relative-to option" >&2
+  exit 1
+}
+
+# adjust the arguments to be relative to the git repo root
+git_root="$(git rev-parse --show-toplevel)"
+realpath_cmd=$(realpath_with_relative_to)
+relative_pwd="$("$realpath_cmd" --relative-to="$git_root" "$(pwd)")"
+set -- "${@/#/${relative_pwd%/}/}"
+
+# run the docker image
+docker run -v "$git_root:$docker_workdir" "$docker_image_tag" "$@"
+
+
