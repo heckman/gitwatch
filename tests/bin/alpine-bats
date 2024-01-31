@@ -81,6 +81,7 @@ relative_pwd="$("$realpath_cmd" --relative-to="$git_root" "$(pwd)")"
 opts=()
 while [[ "${1:0:1}" == '-' ]]; do
   opts+=("$1"); shift
+  [[ "$1" == '--' ]] && break # the rest are arguments
 done
 set -- "${opts[@]}" "${@/#/${relative_pwd%/}/}"
 
