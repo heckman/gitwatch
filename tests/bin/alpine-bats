@@ -78,7 +78,13 @@ realpath_with_relative_to(){
 git_root="$(git rev-parse --show-toplevel)"
 realpath_cmd=$(realpath_with_relative_to)
 relative_pwd="$("$realpath_cmd" --relative-to="$git_root" "$(pwd)")"
-set -- "${@/#/${relative_pwd%/}/}"
+opts=()
+while [[ "${1:0:1}" == '-' ]]; do
+  opts+=("$1"); shift
+done
+set -- "${opts[@]}" "${@/#/${relative_pwd%/}/}"
+
+
 
 # run the docker image
 docker run -v "$git_root:$docker_workdir" "$docker_image_tag" "$@"
