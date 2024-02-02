@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+
+docker_image_tag='gitwatch-dev'
+
+readonly workdir=/root/gitwatch
+readonly test_repo=/root/repo
+
+print_dockerfile_content(){
+  # shellcheck disable=SC2016
+  # shellcheck disable=SC2028
+  cat <<EODF
+FROM alpine:latest
+# RUN apk add --no-cache bash bats git ncurses inotify-tools procps-ng
+RUN apk add bash bats git ncurses inotify-tools procps-ng
+SHELL ["/bin/bash","-c"]
+
+RUN ln -s '$workdir/gitwatch.sh' '/usr/local/bin/gitwatch'
+ENV TERM=xterm-256color
+RUN cat > /root/.profile <<'EOPF'
+PS1='\$(x=\$?; [ \$x -eq 0 ] && x=''; printf "%3s" \$x) \w # '
+git init '$test_repo'
+echo "Starting gitwatch..."
+/usr/local/bin/gitwatch '$test_repo' &
+cd '$test_repo'
+EOPF
+
+RUN git config --global user.email "\${HOME#/}@gitwatch.test"
+RUN git config --global user.name "\${HOME#/}"
+RUN git config --global init.defaultBranch trunk
+
+WORKDIR "$workdir"
+EODF
+}
+
+# run the docker container in one of three ways:
+#
+# 1. run [NOT bats options] [bats files or directories containing bats files...]
+# 2. run [-i|-interactive] [NOT bash options]
+# 3. run [docker options] [cmd] [args...]
+#
+# TODO: options that should be passed to bats & bash are being passed to docker
+#
+# 1. If any of the arguments are *.bats files or directories containing them,
+#    invokes bats, passing along all options and other arguments.
+# 2. If no arguments are given, or the -i or -interactive option is specified,
+#    the container is started interactively in a bash shell.
+#    invoked if no arguments are given, or if the option is specified
+# 3. Otherwise, the container executes the command in the container
+#    with the specified options/arguments.
+#
+# This function cannot handle options containing unquoted whitespace,
+# as in things like `--file foo`, but `-file=foo` should be ok.
+#
+run(){
+  local -r git_root=$(git rev-parse --show-toplevel)
+  local -a opts=()
+  while [[ "${1:0:1}" == '-' ]]; do
+    [[ "$1" == '--' ]] && { shift; break; } # the rest are arguments
+    opts+=( "$1" ); shift
+  done
+  is_bats_file(){ [[ -f "$1" && "$1" == *.bats ]]; }
+  is_bats_dir(){ [[ -d "$1" ]] && ls "$1"/*.bats > /dev/null 2>&1; }
+  make_relative_to(){ echo "${2/#/"${PWD#"$1/"}/"}"; }
+  is_testing(){ false; }
+  local -a args
+  local -a cmd
+  while (( $# > 0 )); do
+    if is_bats_file "$1" || is_bats_dir "$1"; then
+      # make the path to file relative to the repo root,
+      # because that's where bats will be running from
+      args+=( "$(make_relative_to "$git_root" "$1")" )
+      cmd=( bats -p )
+    else
+      args+=( "$1" )
+    fi
+    shift
+  done
+  if [[ "${opts[0]}" == '-i' || "${opts[0]}" == '--interactive' ]]; then
+    INTERACTIVE=opted_in
+    opts=("${opts[@]:1}")
+  fi
+  if (( ${#args[@]} + ${#opts[@]} == 0 )) || [[ $INTERACTIVE ]]; then
+    opts+=( '-ti' );
+    if (( ${#args[@]} == 0 )); then cmd=( '/bin/bash' '-il' ); fi
+  fi
+  docker run \
+    --mount source="$git_root",target="$workdir",type=bind \
+    "${opts[@]}" "$docker_image_tag" "${cmd[@]}" "${args[@]}"
+}
+clean(){
+  # shellcheck disable=SC2015
+  exists && docker image rm --force "$docker_image_tag" || true
+}
+build(){
+  dockerfile="$(mktemp)"
+  trap 'rm -- "$dockerfile"' EXIT
+  print_dockerfile_content > "$dockerfile"
+  docker buildx build -t "$docker_image_tag" -f "$dockerfile"  .
+}
+exists(){
+  [[ -n $(docker images -q "$docker_image_tag") ]] > /dev/null
+}
+list(){
+  docker images | awk "NR==1||/^$docker_image_tag /"
+}
+
+usage(){
+  cat <<'EOF'
+Usage: gw [run|new|build|clean|list|exists]
+EOF
+exit 1
+}
+
+main(){
+  case "$1" in
+  exists)
+    exists
+    ;;
+  ls|list)
+    list
+    ;;
+  rm|clean)
+    clean
+    ;;
+  build)
+    clean && build
+    ;;
+  new)
+    # shellcheck disable=SC2015
+    clean && build
+    shift
+    run "$@"
+    ;;
+  run)
+    shift ;&
+  *)
+    exists || build
+    run "$@"
+    ;;
+  esac
+}
+
+main "$@"
