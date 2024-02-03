@@ -1,143 +1,199 @@
 #!/usr/bin/env bash
 
-docker_image_tag='gitwatch-dev'
 
-readonly workdir=/root/gitwatch
-readonly test_repo=/root/repo
+set -euo pipefail
 
-print_dockerfile_content(){
-  # shellcheck disable=SC2016
-  # shellcheck disable=SC2028
-  cat <<EODF
+
+# if DOCKERFILE is set, look there for a dockerfile, otherwise
+# look for a Dockerfile in the current directory
+# if a file is not found a dockerfile will be generated.
+# DOCKERFILE=
+
+## CUSTOMISE THIS PART TO SUIT
+
+readonly docker_image_tag=gitwatch-dev
+readonly image_root_dir=/root/gitwatch
+readonly -a default_command=( bats -p )
+readonly -a default_command_help=( bats -h )
+
+## SETTINGS FOR GENERATING A DOCKERFILE
+# set to non-empty value to ignore DOCKERFILE setting and local Dockerfiles
+# FORCE_GENERATE_DOCKERFILE=
+
+# for interactive use
+readonly image_work_dir=/root/repo
+readonly root_user_profile="
+ln -s '/usr/local/bin/gitwatch' '$image_root_dir/gitwatch.sh'
+git init '$image_work_dir'
+echo 'Starting gitwatch...'
+gitwatch '$image_work_dir' &
+cd '$image_work_dir'
+"
+
+print_dockerfile(){
+  CAT <<"EOF"
 FROM alpine:latest
-# RUN apk add --no-cache bash bats git ncurses inotify-tools procps-ng
-RUN apk add bash bats git ncurses inotify-tools procps-ng
+RUN apk add --no-cache bash bats git ncurses procps-ng inotify-tools
 SHELL ["/bin/bash","-c"]
-
-RUN ln -s '$workdir/gitwatch.sh' '/usr/local/bin/gitwatch'
+WORKDIR ${image_work_dir:-$image_root_dir}
 ENV TERM=xterm-256color
-RUN cat > /root/.profile <<'EOPF'
-PS1='\$(x=\$?; [ \$x -eq 0 ] && x=''; printf "%3s" \$x) \w # '
-git init '$test_repo'
-echo "Starting gitwatch..."
-/usr/local/bin/gitwatch '$test_repo' &
-cd '$test_repo'
-EOPF
-
-RUN git config --global user.email "\${HOME#/}@gitwatch.test"
-RUN git config --global user.name "\${HOME#/}"
-RUN git config --global init.defaultBranch trunk
-
-WORKDIR "$workdir"
-EODF
-}
-
-# run the docker container in one of three ways:
-#
-# 1. run [NOT bats options] [bats files or directories containing bats files...]
-# 2. run [-i|-interactive] [NOT bash options]
-# 3. run [docker options] [cmd] [args...]
-#
-# TODO: options that should be passed to bats & bash are being passed to docker
-#
-# 1. If any of the arguments are *.bats files or directories containing them,
-#    invokes bats, passing along all options and other arguments.
-# 2. If no arguments are given, or the -i or -interactive option is specified,
-#    the container is started interactively in a bash shell.
-#    invoked if no arguments are given, or if the option is specified
-# 3. Otherwise, the container executes the command in the container
-#    with the specified options/arguments.
-#
-# This function cannot handle options containing unquoted whitespace,
-# as in things like `--file foo`, but `-file=foo` should be ok.
-#
-run(){
-  local -r git_root=$(git rev-parse --show-toplevel)
-  local -a opts=()
-  while [[ "${1:0:1}" == '-' ]]; do
-    [[ "$1" == '--' ]] && { shift; break; } # the rest are arguments
-    opts+=( "$1" ); shift
-  done
-  is_bats_file(){ [[ -f "$1" && "$1" == *.bats ]]; }
-  is_bats_dir(){ [[ -d "$1" ]] && ls "$1"/*.bats > /dev/null 2>&1; }
-  make_relative_to(){ echo "${2/#/"${PWD#"$1/"}/"}"; }
-  is_testing(){ false; }
-  local -a args
-  local -a cmd
-  while (( $# > 0 )); do
-    if is_bats_file "$1" || is_bats_dir "$1"; then
-      # make the path to file relative to the repo root,
-      # because that's where bats will be running from
-      args+=( "$(make_relative_to "$git_root" "$1")" )
-      cmd=( bats -p )
-    else
-      args+=( "$1" )
-    fi
-    shift
-  done
-  if [[ "${opts[0]}" == '-i' || "${opts[0]}" == '--interactive' ]]; then
-    INTERACTIVE=opted_in
-    opts=("${opts[@]:1}")
+RUN git config --global user.email tester@testing.test
+RUN git config --global user.name tester
+RUN git config --global init.defaultBranch trunk # purposefully obscure
+EOF
+  if [[ -n ${root_user_profile:-} ]]; then
+    echo "
+RUN cat > /root/.profile <<'END_PROFILE'
+${root_user_profile:-}
+END_PROFILE
+"
   fi
-  if (( ${#args[@]} + ${#opts[@]} == 0 )) || [[ $INTERACTIVE ]]; then
-    opts+=( '-ti' );
-    if (( ${#args[@]} == 0 )); then cmd=( '/bin/bash' '-il' ); fi
-  fi
-  docker run \
-    --mount source="$git_root",target="$workdir",type=bind \
-    "${opts[@]}" "$docker_image_tag" "${cmd[@]}" "${args[@]}"
 }
-clean(){
-  # shellcheck disable=SC2015
-  exists && docker image rm --force "$docker_image_tag" || true
-}
-build(){
-  dockerfile="$(mktemp)"
-  trap 'rm -- "$dockerfile"' EXIT
-  print_dockerfile_content > "$dockerfile"
-  docker buildx build -t "$docker_image_tag" -f "$dockerfile"  .
-}
-exists(){
-  [[ -n $(docker images -q "$docker_image_tag") ]] > /dev/null
-}
-list(){
-  docker images | awk "NR==1||/^$docker_image_tag /"
-}
+
+## SHOULDN'T NEED TO CHANGE ANYTHING BELOW THIS LINE
+
 
 usage(){
-  cat <<'EOF'
-Usage: gw [run|new|build|clean|list|exists]
-EOF
-exit 1
+  echo "
+  USAGE
+
+      ${0##*/} [ -new ] [ ARGUMENTS... ]
+      ${0##*/} [ -new ]
+      ${0##*/} -run COMMAND [ ARGUMENTS... ]
+      ${0##*/} [ -bulid | -id | -clean | -rm ]
+      ${0##*/} [ -help | -selfcheck ]
+
+  This script manages and runs a docker container from a
+  docker image with the tag '${docker_image_tag}'.
+
+  In its first form, this script starts the docker container
+  with the default command: '${default_command[0]}'.
+
+  In its second form (when invoked without any arguments)
+  this script starts an interactive shell in the docker container.
+
+  In its first two forms, before running the docker container,
+  this script will build the docker image if it does not exist.
+  If the docker image exists and the '-new' option is specified,
+  it will be deleted and rebuilt before running the docker container.
+
+  In its third form, this script starts the docker container with
+  the command COMMAND. If the docker image does not exist,
+  it will be built. There is no '-new' option in this form.
+
+  The script's fourth form is for the managment of the docker image
+  using one of the following options:
+
+    -build        build the docker image
+    -id           print the id of the docker image
+    -clean, -rm   delete the docker image, if it exists:
+                  quits with exit code 1 if the image does not exist
+
+  In the fifth form, this script either prints this useful message,
+  followed by the default command's help (if the docker image exists),
+  or it runs a selfcheck to ensure that this script's options do not
+  conflict with the options of the default command.
+"
+  if [[ -n ${default_command_help[0]:-} ]]; then
+    if exists; then
+      echo "The following is the help for '${default_command[0]}':
+
+"
+      "${default_command_help[@]}"
+    else
+      echo "
+Help for '${default_command[0]}' is not avaiable because the docker image does not exist.
+"
+    fi
+  fi
 }
 
-main(){
-  case "$1" in
-  exists)
-    exists
-    ;;
-  ls|list)
-    list
-    ;;
-  rm|clean)
-    clean
-    ;;
-  build)
-    clean && build
-    ;;
-  new)
-    # shellcheck disable=SC2015
-    clean && build
-    shift
-    run "$@"
-    ;;
-  run)
-    shift ;&
-  *)
-    exists || build
-    run "$@"
-    ;;
-  esac
+
+run(){
+  exists || build
+  local source_root_dir docker_run_options=
+  source_root_dir=$(git rev-parse --show-toplevel) \
+   || die 'Error: must be in a git repository'
+  (( $# == 0 )) && docker_run_options=-ti
+  docker run \
+    --mount source="$source_root_dir",target="$image_root_dir",type=bind \
+    --workdir="$image_root_dir${PWD#"$source_root_dir"}" \
+    $docker_run_options "$docker_image_tag" "$@"
 }
 
-main "$@"
+# shellcheck disable=SC2120
+clean(){
+  exists || return
+  # TODO: find a way to do this without forcing it
+  docker image rm --force "$docker_image_tag"
+}
+
+generate_dockerfile(){
+  local dockerfile
+  dockerfile="$(mktemp)"
+  trap "rm -- '$dockerfile'" EXIT
+  print_dockerfile > "$dockerfile"
+  echo -- "$dockerfile"
+}
+
+build(){
+  clean || true
+  local dockerfile=${DOCKERFILE:-$PWD/Dockerfile}
+  if [[ -n "${FORCE_GENERATE_DOCKERFILE:-}" || ! -f "$dockerfile" ]]; then
+    dockerfile="$(mktemp)"
+    # shellcheck disable=SC2064 # expand filename now
+    trap "rm -- '$dockerfile'" EXIT
+    print_dockerfile > "$dockerfile"
+  fi
+  docker buildx build -t "$docker_image_tag" -f "$dockerfile" .
+}
+
+id(){
+  docker images -q "$docker_image_tag"
+}
+
+exists(){
+  [[ -n $(id) ]]
+}
+
+die(){
+  echo "$*" >&2
+  exit 1
+}
+
+# this looks for options in the default command's help output
+# specifically for matches with each option, surrounded by either
+# whitespace or commas.
+check_option_definitions(){
+  local -r re="^|[[:space:],])${1// /[[:space:],]|[[:space:],]}([[:space:],]|$)"
+  if exists ; then
+    echo "Checking ${default_command[1]} options for conflicts..."
+    run "${default_command_help[@]}" | grep -E -- "$re" \
+      && die "FAIL: options conflict."
+    echo "OK: $1 "
+    exit 0
+  else
+    echo "The docker image does not exist, build it first." >&2
+    exit 1
+  fi
+
+}
+
+
+case "${1:-}" in
+# options use single - in an attempt to' avoid conflicts
+# with the options of the default command
+
+# includes the default command's help if the image exists
+-help|--help|-h) usage ;; #
+-selfcheck) check_option_definitions \
+  '-selfcheck -clean -rm -build -id -new -cmd' ;;
+-clean|-rm) clean ;;
+-build) build ;;
+-id) id ;;
+-run) shift; run "$@" ;;
+'') run ;;
+-new) shift; clean || true ; (($# == 0)) && { run && exit;} ;&
+*) run "${default_command[@]}" "$@" ;;
+
+esac
