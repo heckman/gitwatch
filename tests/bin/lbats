@@ -1,1 +1,179 @@
-linuxified
+#!/usr/bin/env bash
+
+#  linuxified
+#
+#  a lightweight linux docker wrapper for cross-platform testing
+#  designed to be renamed to describe the default command it wraps
+#
+#  requires docker
+
+# shellcheck disable=SC2120
+set -euo pipefail
+
+# USAGE:
+#
+# set LINUXIFIED to non-empty value to expose the docker image control functions
+# it's value will also control verbosity from 0 (silent) to 2 (debug)
+declare verbosity=0
+readonly log=/dev/stdout
+
+
+main(){
+  if [[ -n "${LINUXIFIED:-}" ]]; then
+    [[ "${LINUXIFIED:-}" == [0-9] ]] && verbosity=$LINUXIFIED || verbosity=0
+    case "${1:-}" in
+      clean) clean;; # remove all but latest docker image of this name
+      clear) clear;; # remove all docker images of this name
+      build) build;; # build the docker image, if it doens't exist
+      *) run "$@";;  # run any command, or an interactive shell (no arguments)
+    esac
+  else
+    run "${default_command[@]}" "$@"
+  fi
+}
+
+
+## application-specific settings
+
+# images with this name will be clobberd
+readonly image_name=gitwatch-lbats
+
+# this will be mounted in the docker image, the path must be absolute
+# use "$(git rev-parse --show-toplevel)" for the root of the current git repo
+source_root_dir="$(git rev-parse --show-toplevel)"
+readonly source_root_dir
+
+# the root of the source will be mounted here
+readonly image_root_dir=/root/gitwatch
+
+# this command must be available in the docker image
+# set to empty array to execute targets directly
+readonly -a default_command=( bats -p )
+
+
+## dockerfile definition
+
+readonly image_from='alpine:latest'
+# packages required by the default command (at the very least)
+# include the full package manager command
+readonly package_installer='apk add --no-cache bats git inotify-tools ncurses procps-ng'
+
+readonly -a interactive_shell=( /bin/bash --login )
+
+## root user settings
+
+readonly image_work_dir=/root/repo
+# shellcheck disable=SC2016 # expressions when printing the prompt
+readonly root_prompt='$(printf "%3s" ${?#0}) \w # ' # diplays exit code if > 0
+
+# define supporting files to be written
+readonly -A files=(
+  [/root/.gitconfig]="
+[user]
+	email = tester@testing.test
+	name = tester
+[init]
+	defaultBranch = primus # so code cannot assume otherwise
+"
+[/root/.profile]="
+# this will only be sourced in the interactive shell
+#
+PS1='$root_prompt'
+ln -s '$image_root_dir/gitwatch.sh' '/usr/local/bin/gitwatch'
+echo 'Starting gitwatch...'
+git init '$image_work_dir'
+cd '$image_work_dir'
+gitwatch '$image_work_dir' &
+"
+)
+
+## only a few things left to specify here directly
+
+print_dockerfile(){
+  echo "FROM $image_from"
+  echo "RUN $package_installer"
+  echo "ENV TERM=xterm-256color"
+  # add any custom instructions required...
+
+  # write all files
+  for filename in "${!files[@]}"; do
+    printf "RUN cat> %s <<'EOF'\n%s\nEOF\n" "$filename" "${files[$filename]}";
+  done
+}
+
+
+
+## SHOULDN'T NEED TO CHANGE ANYTHING BELOW THIS LINE
+
+
+# identifies the version of the image by a hash of this script
+image_tag=$(md5 -q < "$0")
+image_tag=${image_tag:0:12} # 6 bytes should be enough
+readonly image_tag
+
+# shellcheck disable=SC2015
+logger(){ [[ "${1:-0}" -lt "${verbosity}" ]] && cat > "$log" || cat > /dev/null; }
+
+# if no arguments are provided,
+# starts an interactive shell in the container
+run(){
+  build
+  local -a interactive_options=()
+  if (( $# == 0 )); then
+    interactive_options=( --tty --interactive );
+    set -- "${interactive_shell[@]}"
+  fi
+  logger <<<'-> Running docker container'
+  echo
+  docker run --rm \
+    --mount source="$source_root_dir",target="$image_root_dir",type=bind \
+    --workdir="$image_root_dir${PWD#"$source_root_dir"}" \
+    "${interactive_options[@]}" "$image_name:$image_tag" "$@"
+  echo
+  clean |& logger
+}
+
+
+# shellcheck disable=SC2086
+clean(){
+  local old_images
+  old_images=$(docker images \
+    | awk '$1=="'$image_name'" && $2!="'$image_tag'"{print $1":"$2}')
+  if [[ -n "$old_images" ]]; then
+    logger <<<'-> Removing old images'
+    docker image rm $old_images |& logger 1
+  fi
+  logger <<<"-> Retained image $image_name:$image_tag"
+}
+
+# shellcheck disable=SC2086
+clear(){
+  local all_images
+  all_images=$(docker images | awk '$1=="'$image_name'"{print $1":"$2}')
+  if [[ -n "$all_images" ]]; then
+    logger <<<"-> Removing all images of $image_name:"
+    docker image rm $all_images |& logger 1
+  else
+    logger <<<"-> No images to remove"
+  fi
+}
+
+build(){
+  if exists "$image_name:$image_tag"; then
+    logger <<<'-> Using existing image'
+    docker image ls "$image_name:$image_tag" |& logger 1
+  else
+    dockerfile="$(mktemp)"
+    # shellcheck disable=SC2064 # expand filename now
+    trap "rm -- '$dockerfile'" EXIT
+    print_dockerfile > "$dockerfile"
+    logger <<<'-> Building new image'
+    docker buildx build -f "$dockerfile" -t "$image_name:$image_tag" . |& logger 1
+  fi
+}
+
+exists(){
+  [[ -n $(docker images -q "$1") ]] > /dev/null
+}
+
+main "$@"
