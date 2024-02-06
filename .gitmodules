@@ -1,3 +1,4 @@
 [submodule "tests/bin/linuxified"]
 	path = tests/bin/linuxified
 	url = https://github.com/heckman/linuxified
+	branch = gitwatch-lbats
